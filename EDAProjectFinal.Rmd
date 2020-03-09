@@ -1,0 +1,420 @@
+---
+title: "EDAProject"
+author: "Team 3"
+date: "2/20/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidycensus)
+library(rio)
+library(broom)
+library(mgcv)
+library(MASS)
+cb_palette = c("#999999", "#E69F00", "#56B4E9", "#009E73",
+    "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+## House Prices Over Time
+
+
+```{r}
+housePriceData = import("State_and_US_SA.xls")
+housePriceData = housePriceData[5:545, 1:52]
+#View(housePriceData)
+```
+
+
+
+
+```{r}
+# change column name
+colNames = as.list(housePriceData[1,])
+names(housePriceData) = colNames
+housePriceData = housePriceData[-c(1),]  #deletes first data row of column names
+```
+
+
+
+```{r}
+period.list = strsplit(as.character(housePriceData$Month), "M")
+period.list = matrix(unlist(period.list), byrow = T, ncol = 2)
+Year = period.list[, 1]
+Month = period.list[, 2]
+housePriceData$Month = Month
+housePriceData$Year = Year
+housePriceData = data.frame(lapply(housePriceData, as.numeric), stringsAsFactors=FALSE)
+#View(housePriceData)
+```
+
+
+```{r}
+state_abbrev = as.data.frame(read.delim(file = "state_abbrevs.txt", header = TRUE, sep = " "))
+state_abbrev = data.frame(lapply(state_abbrev, as.character), stringsAsFactors=FALSE)
+stateCode = as.array(state_abbrev$Code)
+
+housePriceData = housePriceData %>%
+  gather(key = "Code", value = "Price", stateCode)
+
+```
+
+
+## Adjusting for CPI
+```{r}
+cpi.data = read.csv("cpi.csv")
+cpi.data$Period <- sapply(cpi.data$Period, function(x) gsub("M", "", x))
+#cpi.data$Period <- sapply(cpi.data$Period, function(x) gsub("0", "", x))
+#cpi.data
+cpi.data$Period = as.numeric(cpi.data$Period)
+names(cpi.data)[names(cpi.data) == "Period"] <- "Month"
+
+housePriceData = inner_join(housePriceData, cpi.data, by = c("Year", "Month"))
+housePriceData <- transform(housePriceData, Price = (Price / Value)* 100)
+
+```
+
+
+
+```{r}
+housePriceData = inner_join(housePriceData, state_abbrev, by = "Code")
+housePriceData.avgPriceUS = aggregate(Price ~ Year, FUN = mean, data = housePriceData)
+housePriceData.avgPriceRegion = aggregate(Price ~ Year + Region, FUN = mean, data = housePriceData)
+housePriceData.avgPriceState = aggregate(Price ~ Year + State, FUN = mean, data = housePriceData)
+```
+
+
+
+## 
+## Change in prices US (CPI adjusted)
+
+```{r}
+ggplot(housePriceData.avgPriceUS, aes(x = Year, y = Price)) +
+  geom_point() +
+  geom_smooth(method="gam", formula = y~s(x), se = FALSE) +
+  ggtitle("Year Vs. Housing Price") +
+  xlab("Year") +
+  ylab("Housing Price") +
+  theme_bw(base_size=10) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+ In this case, we have used a GAM model to fit the data. Gam is used to fit a non-parametric model to the data. GAM works very well when the factors to be compared is not particularly linearly related to each other. This can sometimes lead to a loss if interpretability, but in this case, we can easily interpret the change in house prices over the years. The graph clearly shows that there are fluctuations in Housing Prices over the time period.  The prices for the houses over the years have been adjusted according to the CPI Index (inflation), hence the effect of market conditions and currency changes has been taken into consideration before plotting the graph. There is a steep increase in the trend for increase in house prices after 1995.  The graph also shows that there are increased fluctuations in the 2000’s and forward. This effect can be attributed to the change in market dynamics and effects of globalization.
+
+
+
+## Biggest increase and decrease
+## changes in price varied by state
+```{r fig.width=15, fig.height=15, echo=FALSE}
+ggplot(housePriceData.avgPriceState, aes(x = Year, y = Price)) +
+  geom_point() +
+  facet_wrap(~ State, ncol = 7) + 
+  geom_smooth(method="gam", formula = y ~ s(x), se = FALSE) +
+  ggtitle("Statewise Plot of Year Vs. Housing Price") +
+  xlab("Year") +
+  ylab("Housing Price") +
+  theme_bw(base_size=20) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+From the graph we can very easily observe that the states show a varied trend for changes in house prices over the years, however the overall trend for house prices over the years remains approximately the same for all the states barring a few exceptions. The District of Columbia shows the highest local increase in the prices, while Nevada shows the maximum local decrease in prices over the years. The major outlier to this trend however is the state of West Virginia. In West Virginia, the house prices decrease over the years as compared to all other states where the prices increase over time.
+
+
+```{r}
+ggplot(housePriceData.avgPriceRegion, aes(x = Year, y = Price)) +
+  geom_point() +
+  facet_wrap(~ Region, ncol = 2) + 
+  #geom_smooth(method = "gam", formula = y ~ s(x), se = FALSE) +
+  geom_line(color = 'blue') +
+  scale_color_manual(values = cb_palette) +
+  ggtitle("Regionwise Plot of Year Vs. Housing Price") +
+  xlab("Year") +
+  ylab("Housing Price") +
+  theme_bw(base_size=10) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The region wise faceted graph helps us to get a better insight of how the prices change over time in various sub parts of the country. In the later 2000’s and forward, all the regions show a sharp increase in house prices, apart from the Midwest region, where the house prices follow an approximately flat trend with not much increase or decrease. While we talk about the absolute difference in prices over the years, West region sees the highest increase followed by the Northeast region. Another interesting observation that comes to light here is that the Midwest and the South region have an identical trend with respect to increase in house prices over the years, but Midwest follows a mostly flat trend as compared to South region where prices of houses do increase substantially over time.
+
+
+
+## Population Density & Change in House Prices
+
+```{r}
+data(state)
+stateAreaData = state.x77
+stateName = row.names(stateAreaData)
+stateAreaData = cbind(stateName,stateAreaData)
+stateAreaData = stateAreaData[, c("stateName", "Area")]
+rowname = seq(1, nrow(stateAreaData), 1)
+row.names(stateAreaData) <- rowname
+stateAreaData = cbind(stateAreaData[,1], as.numeric(stateAreaData[,2]))
+colnames(stateAreaData) = c('State', 'Area')
+stateAreaData = rbind(stateAreaData, c("District of Columbia", 61.05))
+#nrow(stateAreaData)
+```
+
+
+```{r}
+census_api_key("88a802fbbb65a6d48475e8b55569f2a836e11934")
+census1990 = get_decennial(geography = "state", variables = "P0010001", year = 1990)
+names(census1990)[names(census1990) == "NAME"] <- "State"
+census1990['Year'] = 1990
+census1990 = census1990[c('Year', 'State', 'value')]
+
+census2000 = get_decennial(geography = "state", variables = "P001001", year = 2000)
+census2000['Year'] = 2000
+names(census2000)[names(census2000) == "NAME"] <- "State"
+census2000 = census2000[c('Year', 'State', 'value')]
+
+census2010 = get_decennial(geography = "state", variables = "P001001", year = 2010)
+census2010['Year'] = 2010
+names(census2010)[names(census2010) == "NAME"] <- "State"
+census2010 = census2010[c('Year', 'State', 'value')]
+census2010 = census2010[0:51, ]
+
+census2018 <- get_estimates(geography = "state",product = "population", )
+census2018 <- filter(census2018, variable == "POP")
+census2018 <- census2018[0:51,]
+stateAreaData = data.frame(stateAreaData)
+census2018 = data.frame(census2018)
+census2018$NAME = as.factor(census2018$NAME)
+names(census2018)[names(census2018) == "NAME"] <- "State"
+census2018 = subset(census2018, select = c('State', 'value'))
+year = rep("2018", 51)
+census2018$Year = year
+```
+
+```{r}
+joined_data = inner_join(stateAreaData, census2018, by = 'State')
+```
+
+```{r}
+joined_data$density = as.numeric(joined_data$value) / as.numeric(joined_data$Area)
+dec18 = housePriceData[housePriceData$Month== 12 & housePriceData$Year== 2018,]
+jan75 = housePriceData[housePriceData$Month== 1 & housePriceData$Year== 1975,]
+#state = c(unique(housePriceData.avgPriceState$State))
+state = c(state_abbrev$Code)
+change = c(((dec18$Price - jan75$Price)/ jan75$Price)* 100)
+
+priceChange = data.frame(state,change, density = joined_data$density )
+```
+
+
+```{r fig.width=8, fig.height=8, echo=FALSE}
+ggplot(data = priceChange, aes(x= log(density), y =  change)) + 
+  geom_point(alpha = 2/10) +
+  scale_color_manual(values = cb_palette) + geom_smooth(method = "rlm", se = FALSE) +
+  geom_smooth(method = 'lm', se = FALSE, color = 'orange') + 
+  geom_text(aes(label = state), size = 5) +  
+  theme(plot.title = element_text(lineheight = 0.9)) + 
+  xlab("Population Density") + ylab("Percent change in the house price") + 
+  ggtitle("Population Density vs Percent change in the house price ") + 
+  theme_bw(base_size=10) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+## Density vs Change in House prices after removing Outliers
+
+
+
+```{r fig.width=8, fig.height=8, echo=FALSE}
+remove_outliers = priceChange[priceChange$state != 'DC', ]
+remove_outliers = remove_outliers[remove_outliers$state != 'CA', ]
+
+ggplot(data = priceChange, aes(x= log(density), y =  change)) + 
+  geom_point(alpha = 2/10) +
+  scale_color_manual(values = cb_palette) + geom_smooth(method = "rlm", se = FALSE) +
+  geom_smooth(method = 'lm', se = FALSE, color = 'orange') + 
+  geom_text(aes(label = state), size = 5) +  
+  theme(plot.title = element_text(lineheight = 0.9)) + 
+  xlab("Population Density") + ylab("Percent change in the house price") + 
+  ggtitle("Population Density vs Percent change in the house price ") + 
+  theme_bw(base_size=10) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+We have fitted a Robust Linear Model here in place of a linear model. The major property of RLM is that Robust linear model is used when we want to downweigh the effect of any outliers that affect the data. Here, we need to take the log of changes in population density (population density is calculated as [(endPopulation of interval-startPopulation of interval)/( startPopulation of interval) * 100]). This is because the population change density in some states is very high as compared to some other smaller states. Hence, taking log for the same helps to scale them and fit them on a smaller axis. When we plot the graph of changes in population density with respect to changes in house prices, we see that there are two main outliers DC and CA. The houses prices in these two states has increased at a higher rate than any other place in the country. Hence, we see the slope of the fitted line is highly positive in that case. But when we drop those two states as outliers and observe the trend, we see that the overall change in house prices with respect to changes in density does not follow a highly positive trend. The removal of outliers changes the effects observed in the graph at a very high rate.
+
+
+
+## Change in House Prices vs Population Density (Region Wise)
+
+```{r}
+data2018 <- filter(housePriceData, Year == 2018)
+data2018 <- filter(data2018, Month == 12)
+data1975 <- filter(housePriceData, Year == 1975)
+data1975 <- filter(data1975, Month == 1)
+dataChange <- inner_join(data1975,data2018, by = c("State"))
+dataChange$regionPriceChange = c(((dataChange$Price.y - dataChange$Price.x)/ dataChange$Price.x) * 100)
+density = joined_data$density
+priceRegionChange.data = data.frame(density,dataChange )
+```
+
+
+
+```{r fig.width=8, fig.height=8, echo=FALSE}
+ggplot(data = priceRegionChange.data, aes(x= log(density), y =  regionPriceChange)) +
+  geom_point() + 
+  geom_smooth(method = "rlm", se = FALSE)  + 
+  facet_wrap(~Region.x) + 
+  xlab(" Population Density") + ylab("Percent change in the house price") +
+  ggtitle("Percent Density vs Percent change in the house price ") +
+  theme_bw(base_size=10) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The trend for the region wise graph remains approximately like the trend observed for changes in house prices over time. All the regions show substantial increase in house prices with increase in population density apart from Midwest which follows a flat trend. The south region shows similar characteristics to Midwest region but has higher increase in changes in house prices with changes in population density as compared to Midwest region.
+
+
+
+## Changes in Population & Changes in House Prices
+
+```{r}
+Population1990 <- get_decennial(geography = "state", variables = "P0010001", year = 1990)
+Population1990 = as.data.frame((Population1990))
+Population1990 <- Population1990[c(2,4)]
+names(Population1990)[names(Population1990) == "value"] <- "Population1990"
+#head(Population1990)
+
+Population2000 <- get_decennial(geography = "state", variables = "P001001", year = 2000)
+Population2000 = as.data.frame(Population2000)
+names(Population2000)[names(Population2000) == "value"] <- "Population2000"
+Population2000 = as.data.frame((Population2000))
+Population2000 <- Population2000[c(2,4)]
+
+#head(Population2000)
+
+Population2010 <- get_decennial(geography = "state", variables = "P001001", year = 2010)
+Population2010 = as.data.frame(Population2010)
+names(Population2010)[names(Population2010) == "value"] <- "Population2010"
+Population2010 = as.data.frame((Population2010))
+Population2010 <- Population2010[c(2,4)]
+#head(Population2010)
+
+Population2018 <- get_estimates(geography = "state", product = "population")
+Population2018 = as.data.frame(Population2018)
+names(Population2018)[names(Population2018) == "value"] <- "Population2018"
+Population2018 <- Population2018[c(1,4)]
+Population2018 = Population2018[1:52,]
+
+state_abbrev = as.data.frame(read.delim(file = "state_abbrevs.txt", header = TRUE, sep = " "))
+state_abbrev = data.frame(lapply(state_abbrev, as.character), stringsAsFactors=FALSE)
+names(state_abbrev)[names(state_abbrev)=="State"] <- "NAME"
+
+populationChanges = inner_join(state_abbrev, Population1990, by = "NAME")
+populationChanges = inner_join(populationChanges, Population2000, by = "NAME")
+populationChanges = inner_join(populationChanges, Population2010, by = "NAME")
+populationChanges = inner_join(populationChanges, Population2018, by = "NAME")
+
+
+```
+
+```{r}
+housingData = housePriceData[c(1:4,8,9)]
+
+jan1990 = housePriceData[housePriceData$Month == 1 & housePriceData$Year == 1990, ]
+dec1999 = housePriceData[housePriceData$Month == 12 & housePriceData$Year == 1999, ]
+dec1999$HousingPriceChange1999 = dec1999$Price - jan1990$Price
+dec1999 = dec1999[c(3,8:10)]
+
+jan2000 = housePriceData[housePriceData$Month == 1 & housePriceData$Year == 2000, ]
+dec2009 = housePriceData[housePriceData$Month == 12 & housePriceData$Year == 2009, ]
+dec2009$HousingPriceChange2009 = dec2009$Price - jan2000$Price
+dec2009 = dec2009[c(3,8:10)]
+
+jan2010 = housePriceData[housePriceData$Month == 1 & housePriceData$Year == 2010, ]
+dec2018 = housePriceData[housePriceData$Month == 12 & housePriceData$Year == 2018, ]
+dec2018$HousingPriceChange2018 = dec2018$Price - jan2010$Price
+dec2018 = dec2018[c(3,8:10)]
+
+housingPriceChange = inner_join(dec1999, dec2009, by = "Code")
+housingPriceChange = inner_join(housingPriceChange, dec2018, by = "Code")
+housingPriceChange = housingPriceChange[c(1,4,7:10)]
+
+populationChanges$PopulationChange1999 = populationChanges$Population2000 - populationChanges$Population1990
+populationChanges$PopulationChange2009 = populationChanges$Population2010 - populationChanges$Population2000
+populationChanges$PopulationChange2018 = populationChanges$Population2018 - populationChanges$Population2010
+populationChanges = populationChanges[-c(4:7)]
+
+populationHousingData = inner_join(housingPriceChange, populationChanges, by = "Code")
+populationHousingData = populationHousingData[-c(7, 8)]
+populationHousingData = populationHousingData[c(1, 4, 5, 2, 3, 6:9)]
+
+populationHousingData1999 = populationHousingData[c(1:4, 7)]
+populationHousingData1999$Year = 1990
+names(populationHousingData1999)[names(populationHousingData1999)=="HousingPriceChange1999"] <- "HousingPriceChange"
+names(populationHousingData1999)[names(populationHousingData1999)=="PopulationChange1999"] <- "PopulationChange"
+
+populationHousingData2009 = populationHousingData[c(1:3, 5, 8)]
+populationHousingData2009$Year = 2000
+names(populationHousingData2009)[names(populationHousingData2009)=="HousingPriceChange2009"] <- "HousingPriceChange"
+names(populationHousingData2009)[names(populationHousingData2009)=="PopulationChange2009"] <- "PopulationChange"
+
+populationHousingData2018 = populationHousingData[c(1:3, 6, 9)]
+populationHousingData2018$Year = 2010
+names(populationHousingData2018)[names(populationHousingData2018)=="HousingPriceChange2018"] <- "HousingPriceChange"
+names(populationHousingData2018)[names(populationHousingData2018)=="PopulationChange2018"] <- "PopulationChange"
+
+populationHousingData = populationHousingData1999
+populationHousingData = rbind(populationHousingData, populationHousingData2009)
+populationHousingData = rbind(populationHousingData, populationHousingData2018)
+names(populationHousingData)[names(populationHousingData)=="Region.x"] <- "Region"
+
+
+library(viridis)
+#cb_palette = c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+```{r fig.height=6, fig.width = 10}
+ggplot(populationHousingData, aes(x = log(abs(PopulationChange)), y = HousingPriceChange, group = Year, color = Year)) +
+  geom_point() +
+  geom_smooth(method = "lm",se = FALSE) +
+  ggtitle("Change in Population Density Vs. Housing Price Change") +
+  xlab("Change in Population Density") +
+  ylab("Housing Price Change") +
+# scale_color_manual(values = cb_palette) +
+  #scale_color_viridis(option = "cividis") +
+  facet_wrap(Year ~ ., labeller = "label_both") +
+  scale_fill_manual(values = cb_palette) +
+  theme_bw(base_size=15) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The relation between changes in house prices and changes in population can be observed very clearly by plotting the graph which shows changes decade by decade. We have used a linear model to fit the data here, because there are no major outliers to the trends that can be spotted from the graph.  When we observe the graph, we can see that the relation between the changes in population and house prices is almost flat with a very menial positive slope in the year 1990, while in the 2000’s, the trend is highly negative. But as we proceed to see the trend for the year 2010, the trend is again highly positive with a very steep slope.
+
+
+
+```{r fig.height=7, fig.width = 10}
+ggplot(populationHousingData, aes(x = log(abs(PopulationChange)), y = HousingPriceChange, group = Year, color = Year)) +
+  geom_point() +
+  geom_smooth(method = "lm",se = FALSE) +
+  ggtitle("Change in Population Density Vs. Housing Price Change") +
+  xlab("Change in Population Density") +
+  ylab("Housing Price Change") +
+#  scale_color_manual(values = cb_palette) +`
+  #scale_color_viridis(option = "cividis") +
+  facet_wrap(Region ~ ., labeller = "label_both") +
+  scale_fill_manual(values = cb_palette) +
+  theme_bw(base_size=15) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The region wise graph shows us a lot of similar looking trend over the decade factors for various years. When we see the graph for the years 2010 to 2018, we can see that there is an increase in house prices for all the regions, which is the same trend that was observed in the graph faceted by decade as well. When we see the trend for the years 2000 to 2010, we can see that there is a negative trend in house prices with respect to population for all the four regions. This trend is again the same as the one observed above in the decade facet graph. But the most interesting feature of this graph is the decade from 1990 to 2000, in this decade all the regions show a different trend with the changes. 
+
+
+
+Conclusion:
+
+House Prices Over Time: We know for a fact that market dynamics and inflation affect the prices of goods over the years. Here we have taken the above factors into consideration by adjusting for the CPI rates. The graph shows that the house prices change positively over time. This is a very logical conclusion from the given data and the market trend that we know. 
+Population Density and changes in House Prices: The relationship between changes in population and changes in house prices is positive with a very small slope increase value. This is because the changes in population do not affect the changes in house prices on a very large scale, because house prices vary as an effect of inflation, market changes, currency changes in addition to changes in population. However, we can expect a positive change in house prices with respect to changes in population density and that can be observed from the graphs.
+Changes in Population and Changes in House Prices: The changes in population with respect to changes in house prices is expected to display a positive trend as well, which can be easily confirmed from the graphs plotted above. However, we can see that the market condition (inflation in 1995) causes us to observe some weird and untold trends in the graph. Apart from that factor, all other parts of the graph show a trend of increase in house prices with increase in population. 
+From the above trends and graphs, we can say that there is a positive trend for changes in house prices over the years, while there is also a slightly positive trend for increase in house prices with increase in population (which is expected). We expect the house prices to vary positively with changes in population because changes in house prices in any country depends on the factors such as population, population density changes, market changes, inflation and changes in currency rates.
